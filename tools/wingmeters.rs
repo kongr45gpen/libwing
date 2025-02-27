@@ -1,107 +1,151 @@
-use eframe::egui;
-use libwing::{WingConsole, WingResponse, Meter};
-use std::time::Duration;
+mod utils;
+use utils::Args;
+use std::sync::{Arc, RwLock};
+use std::thread;
+use eframe::egui::{self, vec2, Rect, Color32, RichText, FontId, Pos2};
+use libwing::{WingConsole, Meter};
+
 
 fn main() -> Result<(), libwing::Error> {
-    let consoles = WingConsole::scan(true)?;
-    if consoles.is_empty() {
-        eprintln!("No Wing consoles found");
-        std::process::exit(1);
-    }
+    let mut args = Args::new(r#"
+Usage: wingmeters [-h host]
+
+   -h host : IP address or hostname of Wing mixer. Default is to discover and connect to the first mixer found.
+"#);
+    let mut host = None;
+    if args.has_next() && args.next() == "-h" { host = Some(args.next()); }
 
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(800.0, 400.0)),
+        vsync: true,
+        // initial_window_size: Some(vec2(800.0, 400.0)),
         ..Default::default()
     };
 
-    let mut wing = WingConsole::connect(&consoles[0].ip)?;
-    
     // Request meters for first 32 channels
-    let meters: Vec<Meter> = (1..=32).map(|i| Meter {
-        id: i,              // Channel number
-        port: 0,           // Will be set by request_meter
-        interval: 50,      // Update every 50ms
-    }).collect();
+    let meters: Vec<Meter> = (0..16).map(Meter::Channel).collect();
 
-    let port = wing.request_meter(&meters)?;
 
-    // Store meter data in app state
-    let app = WingMetersApp {
-        wing,
-        port,
-        meter_values: vec![0.0; 32],
-    };
+    let mut wing = WingConsole::connect(host.as_deref())?;
+    wing.request_meter(&meters)?;
 
     eframe::run_native(
         "Wing Meters",
         options,
-        Box::new(|_cc| Box::new(app)),
+        Box::new(|_cc| Box::new(WingMetersApp::new(wing))),
     ).unwrap();
 
     Ok(())
 }
 
 struct WingMetersApp {
-    wing: WingConsole,
-    port: u16,
-    meter_values: Vec<f32>,
+    meters: Arc<RwLock<Vec<f32>>>,
+}
+
+impl WingMetersApp {
+    fn new(mut wing: WingConsole) -> Self {
+        let meters = Arc::new(RwLock::new(vec![0.0; 32]));
+        let m = meters.clone();
+
+        let _ = thread::spawn(move || {
+            loop {
+                if let Ok((_, values)) = wing.read_meters() {
+                    let mut vals = m.write().unwrap();
+                    for i in 0..16 {
+                        vals[2*i]   = ((values[i*8 + 2] as f32 / 256.0 + 60.0) / 60.0).clamp(0.0, 1.0);
+                        vals[2*i+1] = ((values[i*8 + 3] as f32 / 256.0 + 60.0) / 60.0).clamp(0.0, 1.0);
+                    }
+                }
+            }
+        });
+
+        Self {
+            meters,
+        }
+    }
 }
 
 impl eframe::App for WingMetersApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Read meter values
-        if let Ok((_, values)) = self.wing.read_meters() {
-            for (i, &value) in values.iter().enumerate() {
-                if i < self.meter_values.len() {
-                    // Convert from dB to normalized value (0.0 to 1.0)
-                    let db = value as f32 / 256.0;
-                    self.meter_values[i] = (db + 60.0) / 60.0; // Assuming -60dB to 0dB range
-                    self.meter_values[i] = self.meter_values[i].clamp(0.0, 1.0);
-                }
-            }
-        }
-
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Channel Meters");
-            
-            for (i, &value) in self.meter_values.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.label(format!("Ch {}: ", i + 1));
-                    let meter_height = 20.0;
-                    let meter_width = ui.available_width() - 50.0;
-                    
-                    let rect = ui.allocate_space(egui::vec2(meter_width, meter_height));
-                    let meter_rect = egui::Rect::from_min_size(
-                        rect.min,
-                        egui::vec2(meter_width * value, meter_height),
-                    );
-                    
-                    // Draw background
-                    ui.painter().rect_filled(
-                        rect.rect,
-                        0.0,
-                        egui::Color32::from_gray(64),
-                    );
-                    
-                    // Draw meter value
-                    let color = if value > 0.9 {
-                        egui::Color32::RED
-                    } else if value > 0.7 {
-                        egui::Color32::YELLOW
-                    } else {
-                        egui::Color32::GREEN
-                    };
-                    
-                    ui.painter().rect_filled(
-                        meter_rect,
-                        0.0,
-                        color,
-                    );
-                });
-            }
+            let vals = self.meters.read().unwrap();
+            let num_cols = vals.len()/2;
+
+            ui.columns(num_cols, |col| {
+                for i in 0..num_cols {
+                    let left = vals[2*i];
+                    let right = vals[2*i+1];
+
+                    col[i].vertical(|ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new(format!("CH{}", i + 1)).font(FontId::proportional(10.0)));
+                        });
+                        ui.style_mut().spacing.item_spacing = vec2(0.0, 0.0);
+                        ui.columns(2, |c| {
+                            c[0].vertical_centered(|ui| {
+                                ui.label(RichText::new("L").font(FontId::proportional(10.0)));
+                            });
+                            c[1].vertical_centered(|ui| {
+                                ui.label(RichText::new("R").font(FontId::proportional(10.0)));
+                            });
+                        });
+
+                        ui.add_space(2.0);
+
+                        let meter_height = ui.available_height();
+                        let (_id, rect) = ui.allocate_space(vec2(ui.available_width(), meter_height));
+
+                        // Draw meter value
+                        let color = if left > 0.9 {
+                            Color32::RED
+                        } else if left > 0.7 {
+                            Color32::YELLOW
+                        } else {
+                            Color32::GREEN
+                        };
+
+                        // bg left
+                        ui.painter().rect_filled(
+                            Rect::from_min_size(
+                                Pos2::new(rect.left(), rect.bottom() - meter_height),
+                                vec2(rect.width()/2.0-1.0, meter_height),
+                            ),
+                            0.0,
+                            Color32::from_gray(64),
+                        );
+                        // fg left
+                        ui.painter().rect_filled(
+                            Rect::from_min_size(
+                                Pos2::new(rect.left(), rect.bottom() - meter_height * left),
+                                vec2(rect.width()/2.0-1.0, meter_height * left),
+                            ),
+                            0.0,
+                            color,
+                        );
+
+                        // bg right
+                        ui.painter().rect_filled(
+                            Rect::from_min_max(
+                                Pos2::new(rect.left() + rect.width()/2.0+1.0, rect.bottom() - meter_height),
+                                rect.max,
+                            ),
+                            0.0,
+                            Color32::from_gray(64),
+                        );
+                        // fg right
+                        ui.painter().rect_filled(
+                            Rect::from_min_max(
+                                Pos2::new(rect.left() + rect.width()/2.0+1.0, rect.bottom() - meter_height * right),
+                                rect.max,
+                            ),
+                            0.0,
+                            color,
+                        );
+                    });
+                }
+            });
         });
 
         // Request continuous updates
-        ctx.request_repaint_after(Duration::from_millis(50));
+        ctx.request_repaint();
     }
 }

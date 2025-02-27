@@ -10,6 +10,7 @@ Included in this package are:
 - C API bindings for the Rust library
 - <b>wingprop:</b> A command line utility for setting and getting property values, as well as looking at property schemas
 - <b>wingmon:</b> A command line utility for monitoring your Wing's properies as they change in real time.
+- <b>wingmeters:</b> An app to show some channel level meters of the Wing in real time.
 - <b>wingschema</b>: A command line utility for generating a JSON schema of your
   Wing's properties, as well as updating a name to id mapping of Wing's
   properties. See below for more information on this mapping.
@@ -93,6 +94,13 @@ Wing before running **wingschema** and restore it afterwards.
 - get a property schema
 
 It also has an option to output as JSON (`-j`). Run `wingprop --help` to see the options.
+
+## wingmeters utility
+
+**wingmeters** is a grphical app that shows you the output levels of the
+channels 1-16 in realtime. Just run it with no arguments (it'll discover the
+Wing on the network for you). Now make a channel make noise and you should see
+meters jump around. Run `wingmeters --help` to see the options.
 
 ## wingschema utility
 

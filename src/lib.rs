@@ -71,7 +71,7 @@ mod node;
 mod ffi;
 mod propmap;
 
-pub use console::{WingConsole, DiscoveryInfo};
+pub use console::{WingConsole, DiscoveryInfo, Meter};
 pub use node::{WingNodeDef, WingNodeData, NodeType, NodeUnit};
 
 type Result<T> = std::result::Result<T, Error>;

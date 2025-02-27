@@ -155,7 +155,7 @@ impl WingConsole {
                 let v = cmd as i32;
                 return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_i32(v)));
             } else if cmd <= 0x7f {
-                let v = cmd - 0x40 + 1;
+//                let v = cmd - 0x40 + 1;
                 // println!("REQUEST: NODE INDEX: {}", v);
             } else if cmd <= 0xbf {
                 let len = cmd - 0x80 + 1;
@@ -173,7 +173,7 @@ impl WingConsole {
                 let v = self.read_string(ch, len as usize, &mut raw)?;
                 return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_string(v)));
             } else if cmd == 0xd2 {
-                let v = self.read_u16(ch, &mut raw)? + 1;
+                let _v = self.read_u16(ch, &mut raw)? + 1;
                 // println!("REQUEST: NODE INDEX: {}", v);
             } else if cmd == 0xd3 {
                 let v = self.read_i16(ch, &mut raw)?;
@@ -189,7 +189,7 @@ impl WingConsole {
             } else if cmd == 0xd8 {
                 // println!("REQUEST: CLICK");
             } else if cmd == 0xd9 {
-                let v = self.read_i8(ch, &mut raw)?;
+                let _v = self.read_i8(ch, &mut raw)?;
                 // println!("REQUEST: STEP: {}", v);
             } else if cmd == 0xda {
                 // println!("REQUEST: TREE: GOTO ROOT");
@@ -523,11 +523,10 @@ impl WingConsole {
             self.socket.set_read_timeout(Some(self.keep_alive_meters_timer.duration_since(std::time::Instant::now())))?;
             match m.socket.recv_from(&mut buf) {
                 Ok((received, _addr)) => {
-                    return Ok((u16::from_be_bytes([buf[0], buf[1]]),
-                        buf[4..received]
-                        .chunks_exact(2) // Take 2 bytes at a time
-                        .map(|chunk| i16::from_be_bytes([chunk[0], chunk[1]]))
-                        .collect()));
+                    return Ok((u16::from_be_bytes([buf[0], buf[1]]), buf[4..received]
+                            .chunks_exact(2) // Take 2 bytes at a time
+                            .map(|chunk| i16::from_be_bytes([chunk[0], chunk[1]]))
+                            .collect()));
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(10));
