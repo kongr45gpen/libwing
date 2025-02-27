@@ -7,6 +7,25 @@ use crate::{Result, Error, WingResponse};
 use crate::node::{WingNodeDef, WingNodeData};
 use crate::propmap::NAME_TO_DEF;
 
+pub enum Meter {
+    Channel(u8),
+    Aux(u8),
+    Bus(u8),
+    Main(u8),
+    Matrix(u8),
+    Dca(u8),
+    Fx(u8),
+    Source(u8),
+    Output(u8),
+    Monitor,
+    Rta,
+    Channel2(u8),
+    Aux2(u8),
+    Bus2(u8),
+    Main2(u8),
+    Matrix2(u8)
+}
+
 lazy_static::lazy_static! {
     static ref ID_TO_NAME: HashMap<i32, Vec<String>> = {
         let mut id2name = HashMap::<i32, Vec<String>>::new();
@@ -22,6 +41,8 @@ lazy_static::lazy_static! {
 }
 
 const RX_BUFFER_SIZE: usize = 2048;
+const DATA_KEEP_ALIVE_SECONDS: u64 = 7;
+const METERS_KEEP_ALIVE_SECONDS: u64 = 3;
 
 pub struct DiscoveryInfo {
     pub ip:       String,
@@ -31,16 +52,25 @@ pub struct DiscoveryInfo {
     pub firmware: String,
 }
 
+pub struct Meters {
+    pub socket: UdpSocket,
+    pub port: u16,
+}
+
 pub struct WingConsole {
-    stream:             TcpStream,
-    current_node_id:    i32,
-    keep_alive_timer:   std::time::Instant,
-    rx_buf:             [u8; RX_BUFFER_SIZE],
-    rx_buf_tail:        usize,
-    rx_buf_size:        usize,
-    rx_esc:             bool,
-    rx_current_channel: i8,
-    rx_has_in_pipe:     Option<u8>,
+    socket:                  TcpStream,
+    current_node_id:         i32,
+    keep_alive_timer:        std::time::Instant,
+    keep_alive_meters_timer: std::time::Instant,
+    rx_buf:                  [u8; RX_BUFFER_SIZE],
+    rx_buf_tail:             usize,
+    rx_buf_size:             usize,
+    rx_esc:                  bool,
+    rx_current_channel:      i8,
+    rx_has_in_pipe:          Option<u8>,
+    meters:                  Option<Meters>,
+    next_meter_id:           u16,
+
 }
 
 impl WingConsole {
@@ -96,12 +126,12 @@ impl WingConsole {
             };
 
         let mut stream = TcpStream::connect((ip, 2222))?;
-        stream.set_nonblocking(true)?;
+        // stream.set_nonblocking(true)?;
         stream.set_nodelay(true)?;
         stream.write_all(&[0xdf, 0xd1])?;
         
         Ok(Self {
-            stream,
+            socket: stream,
             rx_buf: [0; RX_BUFFER_SIZE],
             rx_buf_tail: 0,
             rx_buf_size: 0,
@@ -109,7 +139,10 @@ impl WingConsole {
             rx_current_channel: -1,
             rx_has_in_pipe: None,
             current_node_id: 0,
-            keep_alive_timer: std::time::Instant::now(),
+            keep_alive_timer: std::time::Instant::now() + std::time::Duration::from_secs(DATA_KEEP_ALIVE_SECONDS),
+            keep_alive_meters_timer: std::time::Instant::now() + std::time::Duration::from_secs(METERS_KEEP_ALIVE_SECONDS),
+            meters: None,
+            next_meter_id: 0,
         })
     }
 
@@ -123,7 +156,7 @@ impl WingConsole {
                 return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_i32(v)));
             } else if cmd <= 0x7f {
                 let v = cmd - 0x40 + 1;
-                println!("REQUEST: NODE INDEX: {}", v);
+                // println!("REQUEST: NODE INDEX: {}", v);
             } else if cmd <= 0xbf {
                 let len = cmd - 0x80 + 1;
                 let v = self.read_string(ch, len as usize, &mut raw)?;
@@ -141,7 +174,7 @@ impl WingConsole {
                 return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_string(v)));
             } else if cmd == 0xd2 {
                 let v = self.read_u16(ch, &mut raw)? + 1;
-                println!("REQUEST: NODE INDEX: {}", v);
+                // println!("REQUEST: NODE INDEX: {}", v);
             } else if cmd == 0xd3 {
                 let v = self.read_i16(ch, &mut raw)?;
                 return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_i16(v)));
@@ -154,18 +187,18 @@ impl WingConsole {
             } else if cmd == 0xd7 {
                 self.current_node_id = self.read_i32(ch, &mut raw)?;
             } else if cmd == 0xd8 {
-                println!("REQUEST: CLICK");
+                // println!("REQUEST: CLICK");
             } else if cmd == 0xd9 {
                 let v = self.read_i8(ch, &mut raw)?;
-                println!("REQUEST: STEP: {}", v);
+                // println!("REQUEST: STEP: {}", v);
             } else if cmd == 0xda {
-                println!("REQUEST: TREE: GOTO ROOT");
+                // println!("REQUEST: TREE: GOTO ROOT");
             } else if cmd == 0xdb {
-                println!("REQUEST: TREE: GO UP 1");
+                // println!("REQUEST: TREE: GO UP 1");
             } else if cmd == 0xdc {
-                println!("REQUEST: DATA");
+                // println!("REQUEST: DATA");
             } else if cmd == 0xdd {
-                println!("REQUEST: CURRENT NODE DEFINITION");
+                // println!("REQUEST: CURRENT NODE DEFINITION");
             } else if cmd == 0xde {
                 return Ok(WingResponse::RequestEnd);
             } else if cmd == 0xdf {
@@ -227,11 +260,43 @@ impl WingConsole {
         Ok(f32::from_bits(val))
     }
 
-    fn keep_alive(&mut self) {
-        if self.keep_alive_timer.elapsed() > Duration::from_secs(7) {
-            self.stream.write_all(&[0xdf, 0xd1]).unwrap();
-            self.keep_alive_timer = std::time::Instant::now();
+    /// read() will call this as needed, but if you don't call read() then the Wing Console will
+    /// hang up the connection after a 10 seconds of no activity. You should call this yourself
+    /// periodically if you are not calling read().
+    pub fn keep_alive(&mut self) -> Result<()> {
+        if self.keep_alive_timer <= std::time::Instant::now() {
+            // println!("keep_alive");
+            self.socket.write_all(&[0xdf, 0xd1])?;
+            self.keep_alive_timer = std::time::Instant::now() + std::time::Duration::from_secs(DATA_KEEP_ALIVE_SECONDS);
         }
+        Ok(())
+    }
+
+    /// read_meters() will call this as needed, but if you don't call read_meters() then the Wing Console will
+    /// hang up the connection after a 5 seconds of no activity. You should call this yourself
+    /// periodically if you are not calling read_meters().
+    pub fn keep_alive_meters(&mut self) -> Result<()> {
+        if self.keep_alive_meters_timer <= std::time::Instant::now() {
+            // println!("keep_alive_meters");
+            let m = self.meters.as_ref().unwrap();
+            let mut keepalive = [
+                0xdf, 0xd3, 0xd4,
+                0x00,
+                0x00,
+                ((m.port >> 8) & 0xff) as u8,
+                (m.port & 0xff) as u8,
+                0xdf, 0xd1
+            ];
+            let mut i = self.next_meter_id as i32;
+            while i > 0 {
+                keepalive[3] = ((i >> 8) & 0xff) as u8;
+                keepalive[4] = (i & 0xff) as u8;
+                self.socket.write_all(&keepalive)?;
+                i -= 1;
+            }
+            self.keep_alive_meters_timer = std::time::Instant::now() + std::time::Duration::from_secs(METERS_KEEP_ALIVE_SECONDS);
+        }
+        Ok(())
     }
 
     fn decode_next(&mut self, raw: &mut Vec::<u8>) -> Result<(i8, u8)> {
@@ -244,25 +309,22 @@ impl WingConsole {
         }
 
         loop {
-            self.keep_alive();
+            self.keep_alive()?;
             if self.rx_buf_size == 0 {
-                loop {
-                    match self.stream.read(&mut self.rx_buf) {
-                        Ok(n) if n > 0 => {
-                            // println!("got n {}...", n);
-                            self.rx_buf_size = n;
-                            self.rx_buf_tail = 0;
-                            break;
-                        }
-                        // check for blocking error
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            self.keep_alive();
-                            std::thread::sleep(Duration::from_millis(10));
-                            continue;
-                        }
-                        Ok(_) => return Err(Error::ConnectionError),
-                        Err(e) => return Err(e.into()),
+                self.socket.set_read_timeout(Some(self.keep_alive_timer.duration_since(std::time::Instant::now())))?;
+                match self.socket.read(&mut self.rx_buf) {
+                    Ok(n) if n > 0 => {
+                        // println!("got n {}...", n);
+                        self.rx_buf_size = n;
+                        self.rx_buf_tail = 0;
                     }
+                    // check for blocking error
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Ok(_) => return Err(Error::ConnectionError),
+                    Err(e) => return Err(e.into()),
                 }
             }
 
@@ -329,7 +391,7 @@ impl WingConsole {
         } else {
             self.format_id(id, &mut buf, 0xd7, Some(0xdd));
         };
-        self.stream.write_all(&buf)?;
+        self.socket.write_all(&buf)?;
         Ok(())
     }
 
@@ -341,8 +403,141 @@ impl WingConsole {
         } else {
             self.format_id(id, &mut buf, 0xd7, Some(0xdc));
         };
-        self.stream.write_all(&buf)?;
+        self.socket.write_all(&buf)?;
         Ok(())
+    }
+
+
+    /// Subscribes to meters from the Wing mixer and returns a meter ID that can be used to
+    /// associate the values that come back when you call read_meter()
+    pub fn request_meter(&mut self, meters: &[Meter]) -> Result<u16>
+    {
+        self.next_meter_id += 1;
+
+        if self.meters.is_none() {
+            let socket = UdpSocket::bind("0.0.0.0:0")?;
+            let port = socket.local_addr()?.port();
+            socket.set_read_timeout(Some(Duration::from_millis(1000))).unwrap();
+            self.meters = Some(Meters { socket, port });
+        } else {
+            self.keep_alive_meters()?;
+        }
+        let m = self.meters.as_ref().unwrap();
+
+        let mut buf = vec![
+            0xdf, 0xd3,
+            0xd3,
+            ((m.port >> 8) & 0xff) as u8,
+            (m.port & 0xff) as u8,
+            0xd4,
+            ((self.next_meter_id >> 8) & 0xff) as u8,
+            (self.next_meter_id & 0xff) as u8,
+            ((m.port >> 8) & 0xff) as u8,
+            (m.port & 0xff) as u8,
+            0xdc,
+        ];
+
+        for meter in meters {
+            match meter {
+                Meter::Channel(n) => {
+                    buf.push(0xa0);
+                    buf.push(*n);
+                }
+                Meter::Aux(n) => {
+                    buf.push(0xa1);
+                    buf.push(*n);
+                }
+                Meter::Bus(n) => {
+                    buf.push(0xa2);
+                    buf.push(*n);
+                }
+                Meter::Main(n) => {
+                    buf.push(0xa3);
+                    buf.push(*n);
+                }
+                Meter::Matrix(n) => {
+                    buf.push(0xa4);
+                    buf.push(*n);
+                }
+                Meter::Dca(n) => {
+                    buf.push(0xa5);
+                    buf.push(*n);
+                }
+                Meter::Fx(n) => {
+                    buf.push(0xa6);
+                    buf.push(*n);
+                }
+                Meter::Source(n) => {
+                    buf.push(0xa7);
+                    buf.push(*n);
+                }
+                Meter::Output(n) => {
+                    buf.push(0xa8);
+                    buf.push(*n);
+                }
+                Meter::Monitor => {
+                    buf.push(0xa9);
+                }
+                Meter::Rta => {
+                    buf.push(0xaa);
+                }
+                Meter::Channel2(n) => {
+                    buf.push(0xab);
+                    buf.push(*n);
+                }
+                Meter::Aux2(n) => {
+                    buf.push(0xac);
+                    buf.push(*n);
+                }
+                Meter::Bus2(n) => {
+                    buf.push(0xad);
+                    buf.push(*n);
+                }
+                Meter::Main2(n) => {
+                    buf.push(0xae);
+                    buf.push(*n);
+                }
+                Meter::Matrix2(n) => {
+                    buf.push(0xaf);
+                    buf.push(*n);
+                }
+            }
+        }
+
+        buf.push(0xde); // end of def
+        buf.push(0xdf);
+        buf.push(0xd1);
+
+        self.socket.write_all(&buf)?;
+
+        Ok(self.next_meter_id)
+    }
+
+    /// reads any meter values that have been requested with request_meter() and returns the meter
+    /// ID along with the meters values
+    pub fn read_meters(&mut self) -> Result<(u16, Vec<i16>)> {
+        loop {
+            self.keep_alive_meters()?;
+            let m = self.meters.as_ref().unwrap();
+            let mut buf = [0u8; 8192];
+            self.socket.set_read_timeout(Some(self.keep_alive_meters_timer.duration_since(std::time::Instant::now())))?;
+            match m.socket.recv_from(&mut buf) {
+                Ok((received, _addr)) => {
+                    return Ok((u16::from_be_bytes([buf[0], buf[1]]),
+                        buf[4..received]
+                        .chunks_exact(2) // Take 2 bytes at a time
+                        .map(|chunk| i16::from_be_bytes([chunk[0], chunk[1]]))
+                        .collect()));
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(_) => {
+                    return Err(Error::ConnectionError);
+                }
+            }
+        }
     }
 
     pub fn set_string(&mut self, id: i32, value: &str) -> Result<()> {
@@ -364,7 +559,7 @@ impl WingConsole {
             // unicode stuff that the wing probably doesn't support
             // if c == 0xdf { buf.push(0xde); }
         }
-        self.stream.write_all(&buf)?;
+        self.socket.write_all(&buf)?;
         Ok(())
     }
 
@@ -378,7 +573,7 @@ impl WingConsole {
         buf.push(bytes[2]);
         buf.push(bytes[3]);
 
-        self.stream.write_all(&buf)?;
+        self.socket.write_all(&buf)?;
         Ok(())
     }
 
@@ -402,7 +597,7 @@ impl WingConsole {
             buf.push(bytes[3]);
         }
 
-        self.stream.write_all(&buf)?;
+        self.socket.write_all(&buf)?;
         Ok(())
     }
 
@@ -433,6 +628,6 @@ impl WingConsole {
 
 impl Drop for WingConsole {
     fn drop(&mut self) {
-        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
     }
 }

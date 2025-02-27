@@ -9,6 +9,7 @@ extern "C" {
 
 typedef struct WingDiscoveryInfo WingDiscoveryInfo;
 typedef struct WingConsole WingConsole;
+typedef struct WingMeter WingMeter;
 typedef struct Response Response;
 
 // Enums
@@ -40,6 +41,26 @@ typedef enum {
     WING_NODE_UNIT_OCTAVES = 7
 } WingNodeUnit;
 
+typedef enum {
+    CHANNEL = 0xA0,
+    AUX = 0xA1,
+    BUS = 0xA2,
+    MAIN = 0xA3,
+    MATRIX = 0xA4,
+    DCA = 0xA5,
+    FX = 0xA6,
+    SOURCE = 0xA7,
+    OUTPUT = 0xA8,
+    MONITOR = 0xA9,
+    RTA = 0xAA,
+    CHANNEL2 = 0xAB,
+    AUX2 = 0xAC,
+    BUS2 = 0xAD,
+    MAIN2 = 0xAE,
+    MATRIX2 = 0xAF
+} MeterType;
+#define METER_ID(type, index) (((type << 8) | (index & 0xFF)) & 0xFFFF)
+
 WingDiscoveryInfo* wing_discover_scan                             (int stop_on_first); // Return value must be freed by wing_discover_destroy()
 int                wing_discover_count                            (const WingDiscoveryInfo* handle);
 const char*        wing_discover_get_ip                           (const WingDiscoveryInfo* handle, int index); // Return value must be free by wing_string_destroy()
@@ -56,6 +77,8 @@ int                wing_console_set_float                         (WingConsole* 
 int                wing_console_set_int                           (WingConsole* handle, int32_t id, int value);
 int                wing_console_request_node_definition           (WingConsole* handle, int32_t id);
 int                wing_console_request_node_data                 (WingConsole* handle, int32_t id);
+uint16_t           wing_console_request_meter                     (WingConsole* handle, uint16_t *meter_ids, size_t len); // see above about meter ids
+int                wing_console_read_meter                        (WingConsole* handle, WingMeter* meter, uint16_t *out_id, int16_t *out_data);
 void               wing_console_destroy                           (WingConsole* handle);
 
 WingResponseType   wing_response_get_type                         (const Response* handle);

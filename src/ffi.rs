@@ -1,7 +1,7 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_float};
 use std::ptr;
-use crate::{WingConsole, NodeType, NodeUnit, WingResponse};
+use crate::{WingConsole, NodeType, NodeUnit, WingResponse, console::Meter};
 
 // Opaque type wrappers
 #[repr(C)]
@@ -594,5 +594,47 @@ pub extern "C" fn wing_node_definition_get_string_enum_long_item(def: *const Res
         } else {
             panic!("Invalid response type");
         }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn wing_console_request_meter(handle: *mut WingConsoleHandle, meters: *const u16, meters_count: usize) -> u16 {
+    unsafe {
+        let meters : Vec<Meter> = std::slice::from_raw_parts(meters, meters_count).iter().map(|m|
+            match m & 0xff00 {
+                0xa000 => Meter::Channel((m & 0xff) as u8),
+                0xa100 => Meter::Aux((m & 0xff) as u8),
+                0xa200 => Meter::Bus((m & 0xff) as u8),
+                0xa300 => Meter::Main((m & 0xff) as u8),
+                0xa400 => Meter::Matrix((m & 0xff) as u8),
+                0xa500 => Meter::Dca((m & 0xff) as u8),
+                0xa600 => Meter::Fx((m & 0xff) as u8),
+                0xa700 => Meter::Source((m & 0xff) as u8),
+                0xa800 => Meter::Output((m & 0xff) as u8),
+                0xa900 => Meter::Monitor,
+                0xaa00 => Meter::Rta,
+                0xab00 => Meter::Channel2((m & 0xff) as u8),
+                0xac00 => Meter::Aux2((m & 0xff) as u8),
+                0xad00 => Meter::Bus2((m & 0xff) as u8),
+                0xae00 => Meter::Main2((m & 0xff) as u8),
+                0xaf00 => Meter::Matrix2((m & 0xff) as u8),
+                _ => panic!("Invalid meter number")
+            }
+        ).collect();
+        (*handle).console.request_meter(&meters).unwrap_or_default()
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn wing_console_read_meter(handle: *mut WingConsoleHandle, ret_id: *mut u16, ret_data: *mut i16) -> c_int {
+    unsafe {
+        if let Ok((id, data)) = (*handle).console.read_meters() {
+            *ret_id = id;
+            ptr::copy_nonoverlapping(data.as_ptr(), ret_data, data.len());
+            data.len() as c_int
+        } else {
+            -1
+        }
+
     }
 }
