@@ -18,6 +18,11 @@ socket2 = "0.5"
 lazy_static = "1.4"
 jzon = "0.12.5"
 thiserror = "2.0.11"
+eframe = "0.26.0"
+
+[[bin]]
+name = "wingmeters"
+path = "tools/wingmeters.rs"
 
 [[bin]]
 name = "wingmon"
