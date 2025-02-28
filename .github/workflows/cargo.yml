@@ -62,13 +62,24 @@ jobs:
     - name: Install cargo-edit
       run: cargo install cargo-edit
 
+    - name: Configure Git
+      run: |
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git config --global user.name "github-actions[bot]"
+
     - name: Bump version
       run: cargo set-version --bump minor
-      
+
+    - name: Commit version bump
+      run: |
+        git add Cargo.toml Cargo.lock
+        git commit -m "Bump version [skip ci]"
+        git push
+
     - name: Publish to crates.io
       env:
         CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-      run: cargo publish
+      run: cargo publish --allow-dirty
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
