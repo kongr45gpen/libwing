@@ -1,34 +1,62 @@
-name: Rust CI
+name: Release Build
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches: [ "release" ]
 
 env:
   CARGO_TERM_COLOR: always
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_name: wing-linux
+            asset_name: wing-linux.tar.gz
+          - os: windows-latest  
+            artifact_name: wing-windows
+            asset_name: wing-windows.zip
+            
     runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
     - uses: actions-rust-lang/setup-rust-toolchain@v1
 
-    - name: build libwing
-      run: cargo build
+    - name: Build all targets
+      run: |
+        cargo build --release
+        cargo build --release --bin wingmon
+        cargo build --release --bin wingschema
 
-    - name: build wingmon
-      run: cargo build --bin wingmon
+    - name: Package Linux Build
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        mkdir -p ${{ matrix.artifact_name }}
+        cp target/release/libwing.so ${{ matrix.artifact_name }}/
+        cp target/release/wingmon ${{ matrix.artifact_name }}/
+        cp target/release/wingschema ${{ matrix.artifact_name }}/
+        tar czf ${{ matrix.asset_name }} ${{ matrix.artifact_name }}
 
-    - name: build wingschema
-      run: cargo build --bin wingschema
+    - name: Package Windows Build  
+      if: matrix.os == 'windows-latest'
+      run: |
+        mkdir ${{ matrix.artifact_name }}
+        copy target\release\wing.dll ${{ matrix.artifact_name }}\
+        copy target\release\wingmon.exe ${{ matrix.artifact_name }}\
+        copy target\release\wingschema.exe ${{ matrix.artifact_name }}\
+        7z a ${{ matrix.asset_name }} ${{ matrix.artifact_name }}
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/heads/release')
+      with:
+        files: ${{ matrix.asset_name }}
+        tag_name: v${{ github.run_number }}
+        generate_release_notes: true
