@@ -41,7 +41,7 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: |
         mkdir -p ${{ matrix.artifact_name }}
-        cp target/release/libwing.so ${{ matrix.artifact_name }}/
+        cp target/release/liblibwing.so ${{ matrix.artifact_name }}/
         cp target/release/wingmon ${{ matrix.artifact_name }}/
         cp target/release/wingschema ${{ matrix.artifact_name }}/
         cp target/release/wingprop ${{ matrix.artifact_name }}/
@@ -52,7 +52,7 @@ jobs:
       if: matrix.os == 'windows-latest'
       run: |
         mkdir ${{ matrix.artifact_name }}
-        copy target\release\wing.dll ${{ matrix.artifact_name }}\
+        copy target\release\libwing.dll ${{ matrix.artifact_name }}\
         copy target\release\wingmon.exe ${{ matrix.artifact_name }}\
         copy target\release\wingschema.exe ${{ matrix.artifact_name }}\
         copy target\release\wingprop.exe ${{ matrix.artifact_name }}\
