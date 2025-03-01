@@ -5,6 +5,8 @@ use std::thread;
 use eframe::egui::{self, vec2, Rect, Color32, RichText, FontId, Pos2};
 use libwing::{WingConsole, Meter};
 
+// Number of channels to request meters for max 40
+const CHANNEL_COUNT: u8 = 16;
 
 fn main() -> Result<(), libwing::Error> {
     let mut args = Args::new(r#"
@@ -22,7 +24,7 @@ Usage: wingmeters [-h host]
     };
 
     // Request meters for first 32 channels
-    let meters: Vec<Meter> = (0..16).map(Meter::Channel).collect();
+    let meters: Vec<Meter> = (0..CHANNEL_COUNT).map(Meter::Channel).collect();
 
 
     let mut wing = WingConsole::connect(host.as_deref())?;
@@ -43,14 +45,14 @@ struct WingMetersApp {
 
 impl WingMetersApp {
     fn new(mut wing: WingConsole) -> Self {
-        let meters = Arc::new(RwLock::new(vec![0.0; 32]));
+        let meters = Arc::new(RwLock::new(vec![0.0; (CHANNEL_COUNT * 2).into()]));
         let m = meters.clone();
 
         let _ = thread::spawn(move || {
             loop {
                 if let Ok((_, values)) = wing.read_meters() {
                     let mut vals = m.write().unwrap();
-                    for i in 0..16 {
+                    for i in 0..CHANNEL_COUNT.into() {
                         vals[2*i]   = ((values[i*8 + 2] as f32 / 256.0 + 60.0) / 60.0).clamp(0.0, 1.0);
                         vals[2*i+1] = ((values[i*8 + 3] as f32 / 256.0 + 60.0) / 60.0).clamp(0.0, 1.0);
                     }
