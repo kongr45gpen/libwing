@@ -659,5 +659,6 @@ impl WingConsole {
 impl Drop for WingConsole {
     fn drop(&mut self) {
         let _ = self.wsock.clone().lock().unwrap().shutdown(std::net::Shutdown::Both);
+        let _ = self.rsock.clone().lock().unwrap().shutdown(std::net::Shutdown::Both);
     }
 }
