@@ -1,5 +1,9 @@
 # Change Log
 
+## [1.0.2] - 2025-03-03
+
+- Made public fields of WingConsoleHandle and ResponseHandle
+
 ## [1.0.1] - 2025-03-03
 
 - Exposed ffi WingConsoleHandle and ResponseHandle so you can write async wrappers around read()

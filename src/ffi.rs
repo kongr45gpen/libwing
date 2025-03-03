@@ -11,12 +11,12 @@ pub struct WingDiscoveryInfoHandle {
 
 #[repr(C)]
 pub struct WingConsoleHandle {
-    console: WingConsole,
+    pub console: WingConsole,
 }
 
 #[repr(C)]
 pub struct ResponseHandle {
-    response: WingResponse
+    pub response: WingResponse
 }
 
 #[repr(C)]

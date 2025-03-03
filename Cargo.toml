@@ -1,6 +1,6 @@
 [package]
 name = "libwing"
-version = "1.0.1"
+version = "1.0.2"
 license = "MIT"
 readme = "README.md"
 homepage = "https://github.com/dannydulai/libwing"
