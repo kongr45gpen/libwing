@@ -78,6 +78,7 @@ mod propmap;
 
 pub use console::{WingConsole, DiscoveryInfo, Meter};
 pub use node::{WingNodeDef, WingNodeData, NodeType, NodeUnit};
+pub use ffi::{WingConsoleHandle, ResponseHandle};
 
 type Result<T> = std::result::Result<T, Error>;
 
