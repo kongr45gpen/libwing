@@ -1,5 +1,9 @@
 # Change Log
 
+## [1.0.3] - 2025-03-03
+
+- Close read socket when dropping WingConsole
+
 ## [1.0.2] - 2025-03-03
 
 - Made public fields of WingConsoleHandle and ResponseHandle
