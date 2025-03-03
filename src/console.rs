@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::{TcpStream, UdpSocket};
 use std::io::{Read, Write};
 use std::time::Duration;
+use std::sync::{Mutex, Arc};
 
 use crate::{Result, Error, WingResponse};
 use crate::node::{WingNodeDef, WingNodeData};
@@ -57,35 +58,45 @@ pub struct Meters {
     pub port: u16,
 }
 
-pub struct WingConsole {
-    socket:                  TcpStream,
-    current_node_id:         i32,
+struct _WingConsoleMain {
     keep_alive_timer:        std::time::Instant,
-    keep_alive_meters_timer: std::time::Instant,
     rx_buf:                  [u8; RX_BUFFER_SIZE],
     rx_buf_tail:             usize,
     rx_buf_size:             usize,
     rx_esc:                  bool,
     rx_current_channel:      i8,
     rx_has_in_pipe:          Option<u8>,
+    current_node_id:         i32,
+}
+
+struct _WingConsoleMeters {
     meters:                  Option<Meters>,
     next_meter_id:           u16,
+    keep_alive_meters_timer: std::time::Instant,
+}
+
+#[derive(Clone)]
+pub struct WingConsole {
+    rsock: Arc<Mutex<TcpStream>>,
+    wsock: Arc<Mutex<TcpStream>>,
+    main: Arc<Mutex<_WingConsoleMain>>,
+    mtrs: Arc<Mutex<_WingConsoleMeters>>,
 
 }
 
 impl WingConsole {
     pub fn scan(stop_on_first: bool) -> Result<Vec<DiscoveryInfo>> {
-        let socket = UdpSocket::bind("0.0.0.0:0")?;
-        socket.set_broadcast(true)?;
-        socket.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+        let dsock = UdpSocket::bind("0.0.0.0:0")?;
+        dsock.set_broadcast(true)?;
+        dsock.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
 
         let mut results = Vec::new();
         let mut attempts = 0;
 
-        socket.send_to(b"WING?", "255.255.255.255:2222")?;
+        dsock.send_to(b"WING?", "255.255.255.255:2222")?;
         while attempts < 10 {
             let mut buf = [0u8; 1024];
-            match socket.recv_from(&mut buf) {
+            match dsock.recv_from(&mut buf) {
                 Ok((received, _)) => {
                     if let Ok(response) = String::from_utf8(buf[..received].to_vec()) {
                         let tokens: Vec<&str> = response.split(',').collect();
@@ -129,67 +140,74 @@ impl WingConsole {
         // stream.set_nonblocking(true)?;
         stream.set_nodelay(true)?;
         stream.write_all(&[0xdf, 0xd1])?;
-        
+
         Ok(Self {
-            socket: stream,
-            rx_buf: [0; RX_BUFFER_SIZE],
-            rx_buf_tail: 0,
-            rx_buf_size: 0,
-            rx_esc: false,
-            rx_current_channel: -1,
-            rx_has_in_pipe: None,
-            current_node_id: 0,
-            keep_alive_timer: std::time::Instant::now() + std::time::Duration::from_secs(DATA_KEEP_ALIVE_SECONDS),
-            keep_alive_meters_timer: std::time::Instant::now() + std::time::Duration::from_secs(METERS_KEEP_ALIVE_SECONDS),
-            meters: None,
-            next_meter_id: 0,
+            wsock: Arc::new(Mutex::new(stream.try_clone()?)),
+            rsock: Arc::new(Mutex::new(stream)),
+            main: Arc::new(Mutex::new(_WingConsoleMain {
+                keep_alive_timer: std::time::Instant::now() + std::time::Duration::from_secs(DATA_KEEP_ALIVE_SECONDS),
+                rx_buf: [0; RX_BUFFER_SIZE],
+                rx_buf_tail: 0,
+                rx_buf_size: 0,
+                rx_esc: false,
+                rx_current_channel: -1,
+                rx_has_in_pipe: None,
+                current_node_id: 0,
+            })),
+            mtrs: Arc::new(Mutex::new(_WingConsoleMeters {
+                keep_alive_meters_timer: std::time::Instant::now() + std::time::Duration::from_secs(METERS_KEEP_ALIVE_SECONDS),
+                meters: None,
+                next_meter_id: 0,
+            })),
         })
     }
 
     pub fn read(&mut self) -> Result<WingResponse> {
         loop {
+            let mainptr = self.main.clone();
+            let mut main = mainptr.lock().unwrap();
             let mut raw = Vec::new(); 
-            let (ch, cmd) = self.decode_next(&mut raw)?;
+            let (ch, cmd) = self.decode_next(&mut main, &mut raw)?;
             //println!("Channel: {}, Command: {:X}", ch, cmd);
             if cmd <= 0x3f {
                 let v = cmd as i32;
-                return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_i32(v)));
+                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_i32(v)));
             } else if cmd <= 0x7f {
 //                let v = cmd - 0x40 + 1;
                 // println!("REQUEST: NODE INDEX: {}", v);
             } else if cmd <= 0xbf {
                 let len = cmd - 0x80 + 1;
-                let v = self.read_string(ch, len as usize, &mut raw)?;
-                return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_string(v)));
+                let v = self.read_string(&mut main, ch, len as usize, &mut raw)?;
+                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_string(v)));
             } else if cmd <= 0xcf {
                 let len = cmd - 0xc0 + 1;
-                let v = self.read_string(ch, len as usize, &mut raw)?;
-                return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_string(v)));
+                let v = self.read_string(&mut main, ch, len as usize, &mut raw)?;
+                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_string(v)));
             } else if cmd == 0xd0 {
                 let v = String::new();
-                return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_string(v)));
+                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_string(v)));
             } else if cmd == 0xd1 {
-                let len = self.read_u8(ch, &mut raw)? + 1;
-                let v = self.read_string(ch, len as usize, &mut raw)?;
-                return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_string(v)));
+                let len = self.read_u8(&mut main, ch, &mut raw)? + 1;
+                let v = self.read_string(&mut main, ch, len as usize, &mut raw)?;
+                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_string(v)));
             } else if cmd == 0xd2 {
-                let _v = self.read_u16(ch, &mut raw)? + 1;
+                let _v = self.read_u16(&mut main, ch, &mut raw)? + 1;
                 // println!("REQUEST: NODE INDEX: {}", v);
             } else if cmd == 0xd3 {
-                let v = self.read_i16(ch, &mut raw)?;
-                return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_i16(v)));
+                let v = self.read_i16(&mut main, ch, &mut raw)?;
+                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_i16(v)));
             } else if cmd == 0xd4 {
-                let v = self.read_i32(ch, &mut raw)?;
-                return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_i32(v)));
+                let v = self.read_i32(&mut main, ch, &mut raw)?;
+                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_i32(v)));
             } else if cmd == 0xd5 || cmd == 0xd6 {
-                let v = self.read_f(ch, &mut raw)?;
-                return Ok(WingResponse::NodeData(self.rx_current_channel, self.current_node_id, WingNodeData::with_float(v)));
+                let v = self.read_f(&mut main, ch, &mut raw)?;
+                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_float(v)));
             } else if cmd == 0xd7 {
-                self.current_node_id = self.read_i32(ch, &mut raw)?;
+                main.current_node_id = self.read_i32(&mut main, ch, &mut raw)?;
             } else if cmd == 0xd8 {
                 // println!("REQUEST: CLICK");
             } else if cmd == 0xd9 {
-                let _v = self.read_i8(ch, &mut raw)?;
+                let _v = self.read_i8(&mut main, ch, &mut raw)?;
                 // println!("REQUEST: STEP: {}", v);
             } else if cmd == 0xda {
                 // println!("REQUEST: TREE: GOTO ROOT");
@@ -202,34 +220,34 @@ impl WingConsole {
             } else if cmd == 0xde {
                 return Ok(WingResponse::RequestEnd);
             } else if cmd == 0xdf {
-                let def_len = self.read_u16(ch, &mut raw)? as u32;
-                if def_len == 0 { let _ = self.read_u32(ch, &mut raw)?; }
+                let def_len = self.read_u16(&mut main, ch, &mut raw)? as u32;
+                if def_len == 0 { let _ = self.read_u32(&mut main, ch, &mut raw)?; }
                 raw.clear();
-                for _ in 0..def_len { self.decode_next(&mut raw)?; } 
+                for _ in 0..def_len { self.decode_next(&mut main, &mut raw)?; } 
                 return Ok(WingResponse::NodeDef(WingNodeDef::from_bytes(&raw)));
             }
         }
     }
 
-    fn read_i8(&mut self, _ch:i8, raw: &mut Vec::<u8>) -> Result<i8> {
-        Ok(self.decode_next(raw)?.1 as i8)
+    fn read_i8(&mut self, r: &mut _WingConsoleMain, _ch:i8, raw: &mut Vec::<u8>) -> Result<i8> {
+        Ok(self.decode_next(r, raw)?.1 as i8)
     }
-    fn read_u8(&mut self, _ch:i8, raw: &mut Vec::<u8>) -> Result<u8> {
-        Ok(self.decode_next(raw)?.1)
+    fn read_u8(&mut self, r: &mut _WingConsoleMain, _ch:i8, raw: &mut Vec::<u8>) -> Result<u8> {
+        Ok(self.decode_next(r, raw)?.1)
     }
-    fn read_u16(&mut self, _ch:i8, raw: &mut Vec::<u8>) -> Result<u16> {
-        let a = self.decode_next(raw)?;
-        let b = self.decode_next(raw)?;
+    fn read_u16(&mut self, r: &mut _WingConsoleMain, _ch:i8, raw: &mut Vec::<u8>) -> Result<u16> {
+        let a = self.decode_next(r, raw)?;
+        let b = self.decode_next(r, raw)?;
         Ok(((a.1 as u16) << 8) | b.1 as u16)
     }
-    fn read_i16(&mut self, ch:i8, raw: &mut Vec::<u8>) -> Result<i16> {
-        Ok(self.read_u16(ch, raw)? as i16)
+    fn read_i16(&mut self, r: &mut _WingConsoleMain, ch:i8, raw: &mut Vec::<u8>) -> Result<i16> {
+        Ok(self.read_u16(r, ch, raw)? as i16)
     }
-    fn read_u32(&mut self, _ch:i8, raw: &mut Vec::<u8>) -> Result<u32> {
-        let a = self.decode_next(raw)?;
-        let b = self.decode_next(raw)?;
-        let c = self.decode_next(raw)?;
-        let d = self.decode_next(raw)?;
+    fn read_u32(&mut self, r: &mut _WingConsoleMain, _ch:i8, raw: &mut Vec::<u8>) -> Result<u32> {
+        let a = self.decode_next(r, raw)?;
+        let b = self.decode_next(r, raw)?;
+        let c = self.decode_next(r, raw)?;
+        let d = self.decode_next(r, raw)?;
         Ok(
             ((a.1 as u32) << 24) |
             ((b.1 as u32) << 16) |
@@ -237,22 +255,22 @@ impl WingConsole {
             d.1 as u32
             )
     }
-    fn read_i32(&mut self, ch:i8, raw: &mut Vec::<u8>) -> Result<i32> {
-        Ok(self.read_u32(ch, raw)? as i32)
+    fn read_i32(&mut self, r: &mut _WingConsoleMain, ch:i8, raw: &mut Vec::<u8>) -> Result<i32> {
+        Ok(self.read_u32(r, ch, raw)? as i32)
     }
 
-    fn read_string(&mut self, _ch:i8, len:usize, raw: &mut Vec::<u8>) -> Result<String> {
+    fn read_string(&mut self, r: &mut _WingConsoleMain, _ch:i8, len:usize, raw: &mut Vec::<u8>) -> Result<String> {
         // define u8 array of size len and fill it with decode_next
-        let buf = (0..len).map(|_| self.decode_next(raw).map(|(_, v)| v)).collect::<Result<Vec<u8>>>()?;
+        let buf = (0..len).map(|_| self.decode_next(r, raw).map(|(_, v)| v)).collect::<Result<Vec<u8>>>()?;
         // convert u8 array to string
         String::from_utf8(buf).map_err(|_| Error::InvalidData)
     }
 
-    fn read_f(&mut self, _ch:i8, raw: &mut Vec::<u8>) -> Result<f32> {
-        let a = self.decode_next(raw)?;
-        let b = self.decode_next(raw)?;
-        let c = self.decode_next(raw)?;
-        let d = self.decode_next(raw)?;
+    fn read_f(&mut self, r: &mut _WingConsoleMain, _ch:i8, raw: &mut Vec::<u8>) -> Result<f32> {
+        let a = self.decode_next(r, raw)?;
+        let b = self.decode_next(r, raw)?;
+        let c = self.decode_next(r, raw)?;
+        let d = self.decode_next(r, raw)?;
         let val = ((a.1 as u32) << 24) |
             ((b.1 as u32) << 16) |
             ((c.1 as u32) << 8) |
@@ -264,10 +282,14 @@ impl WingConsole {
     /// hang up the connection after a 10 seconds of no activity. You should call this yourself
     /// periodically if you are not calling read().
     pub fn keep_alive(&mut self) -> Result<()> {
-        if self.keep_alive_timer <= std::time::Instant::now() {
+        self._keep_alive(&mut self.main.clone().lock().unwrap())
+    }
+
+    fn _keep_alive(&mut self, r: &mut _WingConsoleMain) -> Result<()> {
+        if r.keep_alive_timer <= std::time::Instant::now() {
             // println!("keep_alive");
-            self.socket.write_all(&[0xdf, 0xd1])?;
-            self.keep_alive_timer = std::time::Instant::now() + std::time::Duration::from_secs(DATA_KEEP_ALIVE_SECONDS);
+            self.wsock.clone().lock().unwrap().write_all(&[0xdf, 0xd1])?;
+            r.keep_alive_timer = std::time::Instant::now() + std::time::Duration::from_secs(DATA_KEEP_ALIVE_SECONDS);
         }
         Ok(())
     }
@@ -276,47 +298,51 @@ impl WingConsole {
     /// hang up the connection after a 5 seconds of no activity. You should call this yourself
     /// periodically if you are not calling read_meters().
     pub fn keep_alive_meters(&mut self) -> Result<()> {
-        if self.keep_alive_meters_timer <= std::time::Instant::now() {
+        self._keep_alive_meters(&mut self.mtrs.clone().lock().unwrap())
+    }
+
+    fn _keep_alive_meters(&mut self, m: &mut _WingConsoleMeters) -> Result<()> {
+        if m.keep_alive_meters_timer <= std::time::Instant::now() {
             // println!("keep_alive_meters");
-            let m = self.meters.as_ref().unwrap();
+            let meters = m.meters.as_ref().unwrap();
             let mut keepalive = [
                 0xdf, 0xd3, 0xd4,
                 0x00,
                 0x00,
-                ((m.port >> 8) & 0xff) as u8,
-                (m.port & 0xff) as u8,
+                ((meters.port >> 8) & 0xff) as u8,
+                (meters.port & 0xff) as u8,
                 0xdf, 0xd1
             ];
-            let mut i = self.next_meter_id as i32;
+            let mut i = m.next_meter_id as i32;
             while i > 0 {
                 keepalive[3] = ((i >> 8) & 0xff) as u8;
                 keepalive[4] = (i & 0xff) as u8;
-                self.socket.write_all(&keepalive)?;
+                self.wsock.clone().lock().unwrap().write_all(&keepalive)?;
                 i -= 1;
             }
-            self.keep_alive_meters_timer = std::time::Instant::now() + std::time::Duration::from_secs(METERS_KEEP_ALIVE_SECONDS);
+            m.keep_alive_meters_timer = std::time::Instant::now() + std::time::Duration::from_secs(METERS_KEEP_ALIVE_SECONDS);
         }
         Ok(())
     }
 
-    fn decode_next(&mut self, raw: &mut Vec::<u8>) -> Result<(i8, u8)> {
-        if self.rx_has_in_pipe.is_some() {
+    fn decode_next(&mut self, r: &mut _WingConsoleMain, raw: &mut Vec::<u8>) -> Result<(i8, u8)> {
+        if r.rx_has_in_pipe.is_some() {
             // println!("has in pipe");
-            let value = self.rx_has_in_pipe.unwrap();
-            self.rx_has_in_pipe = None;
+            let value = r.rx_has_in_pipe.unwrap();
+            r.rx_has_in_pipe = None;
             raw.push(value);
-            return Ok((self.rx_current_channel, value));
+            return Ok((r.rx_current_channel, value));
         }
 
         loop {
-            self.keep_alive()?;
-            if self.rx_buf_size == 0 {
-                self.socket.set_read_timeout(Some(self.keep_alive_timer.duration_since(std::time::Instant::now())))?;
-                match self.socket.read(&mut self.rx_buf) {
+            self._keep_alive(r)?;
+            if r.rx_buf_size == 0 {
+                self.rsock.clone().lock().unwrap().set_read_timeout(Some(r.keep_alive_timer.duration_since(std::time::Instant::now())))?;
+                match self.rsock.clone().lock().unwrap().read(&mut r.rx_buf) {
                     Ok(n) if n > 0 => {
                         // println!("got n {}...", n);
-                        self.rx_buf_size = n;
-                        self.rx_buf_tail = 0;
+                        r.rx_buf_size = n;
+                        r.rx_buf_tail = 0;
                     }
                     // check for blocking error
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -328,38 +354,38 @@ impl WingConsole {
                 }
             }
 
-            let byte = self.rx_buf[self.rx_buf_tail];
+            let byte = r.rx_buf[r.rx_buf_tail];
             // println!("rx_buf_tail: {}, rx_buf_size: {}, byte: {:X} buf: {}",
             //     self.rx_buf_tail,
             //     self.rx_buf_size, byte,
             //     self.rx_buf.iter().map(|x| x.to_string()).collect::<Vec<String>>().join(","));
-            self.rx_buf_tail += 1;
-            self.rx_buf_size -= 1;
+            r.rx_buf_tail += 1;
+            r.rx_buf_size -= 1;
 
-            if ! self.rx_esc {
+            if ! r.rx_esc {
                 if byte == 0xdf {
-                    self.rx_esc = true;
+                    r.rx_esc = true;
                 } else {
                     raw.push(byte);
-                    break Ok((self.rx_current_channel, byte))
+                    break Ok((r.rx_current_channel, byte))
                 }
             } else if byte == 0xdf {
-                break Ok((self.rx_current_channel, byte))
+                break Ok((r.rx_current_channel, byte))
             } else {
-                self.rx_esc = false;
+                r.rx_esc = false;
                 if byte == 0xde {
                     raw.push(0xdf);
-                    break Ok((self.rx_current_channel, 0xdf))
+                    break Ok((r.rx_current_channel, 0xdf))
                 } else if (0xd0..0xde).contains(&byte) {
-                    self.rx_current_channel = (byte - 0xd0) as i8;
+                    r.rx_current_channel = (byte - 0xd0) as i8;
                     continue;
-                } else if self.rx_current_channel >= 0 {
-                    self.rx_has_in_pipe = Some(byte);
+                } else if r.rx_current_channel >= 0 {
+                    r.rx_has_in_pipe = Some(byte);
                     raw.push(0xdf);
-                    break Ok((self.rx_current_channel, 0xdf))
+                    break Ok((r.rx_current_channel, 0xdf))
                 } else {
                     raw.push(byte);
-                    break Ok((self.rx_current_channel, byte))
+                    break Ok((r.rx_current_channel, byte))
                 }
             }
         }
@@ -391,7 +417,7 @@ impl WingConsole {
         } else {
             self.format_id(id, &mut buf, 0xd7, Some(0xdd));
         };
-        self.socket.write_all(&buf)?;
+        self.wsock.clone().lock().unwrap().write_all(&buf)?;
         Ok(())
     }
 
@@ -403,7 +429,7 @@ impl WingConsole {
         } else {
             self.format_id(id, &mut buf, 0xd7, Some(0xdc));
         };
-        self.socket.write_all(&buf)?;
+        self.wsock.clone().lock().unwrap().write_all(&buf)?;
         Ok(())
     }
 
@@ -412,28 +438,30 @@ impl WingConsole {
     /// associate the values that come back when you call read_meter()
     pub fn request_meter(&mut self, meters: &[Meter]) -> Result<u16>
     {
-        self.next_meter_id += 1;
+        let mtrsptr = self.mtrs.clone();
+        let mut mtrs = mtrsptr.lock().unwrap();
+        mtrs.next_meter_id += 1;
 
-        if self.meters.is_none() {
+        if mtrs.meters.is_none() {
             let socket = UdpSocket::bind("0.0.0.0:0")?;
             let port = socket.local_addr()?.port();
             socket.set_read_timeout(Some(Duration::from_millis(1000))).unwrap();
-            self.meters = Some(Meters { socket, port });
+            mtrs.meters = Some(Meters { socket, port });
         } else {
-            self.keep_alive_meters()?;
+            self._keep_alive_meters(&mut mtrs)?;
         }
-        let m = self.meters.as_ref().unwrap();
+        let md = mtrs.meters.as_ref().unwrap();
 
         let mut buf = vec![
             0xdf, 0xd3,
             0xd3,
-            ((m.port >> 8) & 0xff) as u8,
-            (m.port & 0xff) as u8,
+            ((md.port >> 8) & 0xff) as u8,
+            (md.port & 0xff) as u8,
             0xd4,
-            ((self.next_meter_id >> 8) & 0xff) as u8,
-            (self.next_meter_id & 0xff) as u8,
-            ((m.port >> 8) & 0xff) as u8,
-            (m.port & 0xff) as u8,
+            ((mtrs.next_meter_id >> 8) & 0xff) as u8,
+            (mtrs.next_meter_id & 0xff) as u8,
+            ((md.port >> 8) & 0xff) as u8,
+            (md.port & 0xff) as u8,
             0xdc,
         ];
 
@@ -508,20 +536,23 @@ impl WingConsole {
         buf.push(0xdf);
         buf.push(0xd1);
 
-        self.socket.write_all(&buf)?;
+        self.wsock.clone().lock().unwrap().write_all(&buf)?;
 
-        Ok(self.next_meter_id)
+        Ok(mtrs.next_meter_id)
     }
 
     /// reads any meter values that have been requested with request_meter() and returns the meter
     /// ID along with the meters values
     pub fn read_meters(&mut self) -> Result<(u16, Vec<i16>)> {
         loop {
-            self.keep_alive_meters()?;
-            let m = self.meters.as_ref().unwrap();
+            let mptr = self.mtrs.clone();
+            let mut m = mptr.lock().unwrap();
+
+            self._keep_alive_meters(&mut m)?;
+            let md = m.meters.as_ref().unwrap();
             let mut buf = [0u8; 8192];
-            self.socket.set_read_timeout(Some(self.keep_alive_meters_timer.duration_since(std::time::Instant::now())))?;
-            match m.socket.recv_from(&mut buf) {
+            md.socket.set_read_timeout(Some(m.keep_alive_meters_timer.duration_since(std::time::Instant::now())))?;
+            match md.socket.recv_from(&mut buf) {
                 Ok((received, _addr)) => {
                     return Ok((u16::from_be_bytes([buf[0], buf[1]]), buf[4..received]
                             .chunks_exact(2) // Take 2 bytes at a time
@@ -558,7 +589,7 @@ impl WingConsole {
             // unicode stuff that the wing probably doesn't support
             // if c == 0xdf { buf.push(0xde); }
         }
-        self.socket.write_all(&buf)?;
+        self.wsock.clone().lock().unwrap().write_all(&buf)?;
         Ok(())
     }
 
@@ -572,7 +603,7 @@ impl WingConsole {
         buf.push(bytes[2]);
         buf.push(bytes[3]);
 
-        self.socket.write_all(&buf)?;
+        self.wsock.clone().lock().unwrap().write_all(&buf)?;
         Ok(())
     }
 
@@ -596,7 +627,7 @@ impl WingConsole {
             buf.push(bytes[3]);
         }
 
-        self.socket.write_all(&buf)?;
+        self.wsock.clone().lock().unwrap().write_all(&buf)?;
         Ok(())
     }
 
@@ -627,6 +658,6 @@ impl WingConsole {
 
 impl Drop for WingConsole {
     fn drop(&mut self) {
-        let _ = self.socket.shutdown(std::net::Shutdown::Both);
+        let _ = self.wsock.clone().lock().unwrap().shutdown(std::net::Shutdown::Both);
     }
 }
