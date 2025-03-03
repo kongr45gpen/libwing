@@ -42,13 +42,6 @@
 //!
 //! ### Communication Model
 //!
-//! - `WingConsole::read()` will block and return you messages from the Wing mixer as they come in.
-//!
-//! - If the device is modified either physically or via another user of the API, the Wing device
-//!   sends unsolicited `WingResponse::NodeData(channel, id, data)` messages. The `channel`
-//!   parameter will always be the same unless you are using the metering API, which **libwing**
-//!   does not implement yet.
-//!
 //! - You can request properties from the Wing device using `WingConsole.request_node_data()`,
 //!   which will result in a `WingResponse::NodeData` being sent if your request was for a valid
 //!   property. Note that you may get other properties as well, as the Wing device will send
@@ -64,6 +57,18 @@
 //! - You can set properties using the `WingConsole::set_*()` functions. These do not send any
 //!   response back.
 //!
+//! - `WingConsole::read()` will block and return you messages from the Wing mixer as they come in.
+//!   If the device is modified either physically or via another user of the API, the Wing device
+//!   sends unsolicited `WingResponse::NodeData(id, data)` messages.
+//!
+//! - `WingConsole::request_meter()` will ask the Wing to start sending meter level data (the
+//!   bouncing green/yellow/red level lights on the mixer). It returns an u16 ID corresponding to
+//!   this request. This ID will returned when you read the meters data.
+//!
+//! - `WingConsole::read_meters()` will block and return you messages from the Wing mixer as they
+//!   come in. It includes the ID returned from the `request_meter()` call for you to help correlate.
+//!
+//! All these calls are thread safe.
 
 
 mod console;
@@ -91,5 +96,5 @@ pub enum Error {
 pub enum WingResponse {
     RequestEnd,
     NodeDef(WingNodeDef),
-    NodeData(i8, i32, WingNodeData),
+    NodeData(i32, WingNodeData),
 }

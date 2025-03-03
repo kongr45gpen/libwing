@@ -18,7 +18,7 @@ Usage: wingmon [-h host]
     println!("Connected!");
 
     loop {
-        if let WingResponse::NodeData(_, id, data) =  wing.read()? {
+        if let WingResponse::NodeData(id, data) =  wing.read()? {
             match WingConsole::id_to_defs(id) {
                 None => println!("<Unknown:{}> = {}", id, data.get_string()),
                 Some(defs) if defs.is_empty() => println!("<Unknown:{}> = {}", id, data.get_string()),

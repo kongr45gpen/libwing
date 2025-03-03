@@ -173,7 +173,7 @@ Usage: wingprop [-h host] [-j] property[=value|?]
                 }
                 std::process::exit(0);
             },
-            WingResponse::NodeData(_, id, data) => {
+            WingResponse::NodeData(id, data) => {
                 if id == propid {
                     match proptype {
                         NodeType::Node => {

@@ -17,7 +17,7 @@ fn get_node_def(wing: &mut WingConsole, parents: Vec<i32>) -> Vec<Vec<WingNodeDe
         let mut ret2 = Vec::new();
         loop {
             match wing.read().unwrap() {
-                WingResponse::NodeData(_,_,_) => { }
+                WingResponse::NodeData(_, _) => { }
                 WingResponse::NodeDef(def) => {
                     if def.parent_id == *parent {
                         ret2.push(def);

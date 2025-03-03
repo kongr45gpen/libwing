@@ -206,14 +206,14 @@ pub extern "C" fn wing_response_get_type(handle: *const ResponseHandle) -> Respo
     match unsafe { &(*handle).response } {
         WingResponse::RequestEnd => ResponseType::End,
         WingResponse::NodeDef(_) => ResponseType::NodeDefinition,
-        WingResponse::NodeData(_, _, _) => ResponseType::NodeData,
+        WingResponse::NodeData(_, _) => ResponseType::NodeData,
     }
 }
 
 #[no_mangle]
 pub extern "C" fn wing_node_data_get_id(handle: *const ResponseHandle) -> i32 {
     unsafe {
-        if let WingResponse::NodeData(_, id, _) = &(*handle).response {
+        if let WingResponse::NodeData(id, _) = &(*handle).response {
             *id
         } else {
             0
@@ -224,7 +224,7 @@ pub extern "C" fn wing_node_data_get_id(handle: *const ResponseHandle) -> i32 {
 #[no_mangle]
 pub extern "C" fn wing_node_data_get_string(handle: *const ResponseHandle) -> *const c_char {
     unsafe {
-        if let WingResponse::NodeData(_, _, data) = &(*handle).response {
+        if let WingResponse::NodeData(_, data) = &(*handle).response {
             let s = data.get_string();
             CString::new(&s[..]).unwrap().into_raw()
         } else {
@@ -236,7 +236,7 @@ pub extern "C" fn wing_node_data_get_string(handle: *const ResponseHandle) -> *c
 #[no_mangle]
 pub extern "C" fn wing_node_data_get_float(handle: *const ResponseHandle) -> c_float {
     unsafe {
-        if let WingResponse::NodeData(_, _, data) = &(*handle).response {
+        if let WingResponse::NodeData(_, data) = &(*handle).response {
             data.get_float()
         } else {
             0.0
@@ -247,7 +247,7 @@ pub extern "C" fn wing_node_data_get_float(handle: *const ResponseHandle) -> c_f
 #[no_mangle]
 pub extern "C" fn wing_node_data_get_int(handle: *const ResponseHandle) -> c_int {
     unsafe {
-        if let WingResponse::NodeData(_, _, data) = &(*handle).response {
+        if let WingResponse::NodeData(_, data) = &(*handle).response {
             data.get_int()
         } else {
             0
@@ -258,7 +258,7 @@ pub extern "C" fn wing_node_data_get_int(handle: *const ResponseHandle) -> c_int
 #[no_mangle]
 pub extern "C" fn wing_node_data_has_string(handle: *const ResponseHandle) -> c_int {
     unsafe {
-        if let WingResponse::NodeData(_, _, data) = &(*handle).response {
+        if let WingResponse::NodeData(_, data) = &(*handle).response {
             if data.has_string() { 1 } else { 0 }
         } else {
             0
@@ -269,7 +269,7 @@ pub extern "C" fn wing_node_data_has_string(handle: *const ResponseHandle) -> c_
 #[no_mangle]
 pub extern "C" fn wing_node_data_has_float(handle: *const ResponseHandle) -> c_int {
     unsafe {
-        if let WingResponse::NodeData(_, _, data) = &(*handle).response {
+        if let WingResponse::NodeData(_, data) = &(*handle).response {
             if data.has_float() { 1 } else { 0 }
         } else {
             0
@@ -280,7 +280,7 @@ pub extern "C" fn wing_node_data_has_float(handle: *const ResponseHandle) -> c_i
 #[no_mangle]
 pub extern "C" fn wing_node_data_has_int(handle: *const ResponseHandle) -> c_int {
     unsafe {
-        if let WingResponse::NodeData(_, _, data) = &(*handle).response {
+        if let WingResponse::NodeData(_, data) = &(*handle).response {
             if data.has_int() { 1 } else { 0 }
         } else {
             0

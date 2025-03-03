@@ -171,37 +171,37 @@ impl WingConsole {
             //println!("Channel: {}, Command: {:X}", ch, cmd);
             if cmd <= 0x3f {
                 let v = cmd as i32;
-                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_i32(v)));
+                return Ok(WingResponse::NodeData(main.current_node_id, WingNodeData::with_i32(v)));
             } else if cmd <= 0x7f {
 //                let v = cmd - 0x40 + 1;
                 // println!("REQUEST: NODE INDEX: {}", v);
             } else if cmd <= 0xbf {
                 let len = cmd - 0x80 + 1;
                 let v = self.read_string(&mut main, ch, len as usize, &mut raw)?;
-                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_string(v)));
+                return Ok(WingResponse::NodeData(main.current_node_id, WingNodeData::with_string(v)));
             } else if cmd <= 0xcf {
                 let len = cmd - 0xc0 + 1;
                 let v = self.read_string(&mut main, ch, len as usize, &mut raw)?;
-                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_string(v)));
+                return Ok(WingResponse::NodeData(main.current_node_id, WingNodeData::with_string(v)));
             } else if cmd == 0xd0 {
                 let v = String::new();
-                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_string(v)));
+                return Ok(WingResponse::NodeData(main.current_node_id, WingNodeData::with_string(v)));
             } else if cmd == 0xd1 {
                 let len = self.read_u8(&mut main, ch, &mut raw)? + 1;
                 let v = self.read_string(&mut main, ch, len as usize, &mut raw)?;
-                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_string(v)));
+                return Ok(WingResponse::NodeData(main.current_node_id, WingNodeData::with_string(v)));
             } else if cmd == 0xd2 {
                 let _v = self.read_u16(&mut main, ch, &mut raw)? + 1;
                 // println!("REQUEST: NODE INDEX: {}", v);
             } else if cmd == 0xd3 {
                 let v = self.read_i16(&mut main, ch, &mut raw)?;
-                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_i16(v)));
+                return Ok(WingResponse::NodeData(main.current_node_id, WingNodeData::with_i16(v)));
             } else if cmd == 0xd4 {
                 let v = self.read_i32(&mut main, ch, &mut raw)?;
-                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_i32(v)));
+                return Ok(WingResponse::NodeData(main.current_node_id, WingNodeData::with_i32(v)));
             } else if cmd == 0xd5 || cmd == 0xd6 {
                 let v = self.read_f(&mut main, ch, &mut raw)?;
-                return Ok(WingResponse::NodeData(main.rx_current_channel, main.current_node_id, WingNodeData::with_float(v)));
+                return Ok(WingResponse::NodeData(main.current_node_id, WingNodeData::with_float(v)));
             } else if cmd == 0xd7 {
                 main.current_node_id = self.read_i32(&mut main, ch, &mut raw)?;
             } else if cmd == 0xd8 {
