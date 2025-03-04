@@ -2,8 +2,6 @@ name: Release Build
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ "release" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,21 +29,17 @@ jobs:
 
     - name: Build all targets
       run: |
-        cargo build --release
-        cargo build --release --bin wingmon
-        cargo build --release --bin wingschema
-        cargo build --release --bin wingprop
-        cargo build --release --bin wingmeters
+        cargo build --release --all-targets
 
     - name: Package Linux Build
       if: matrix.os == 'ubuntu-latest'
       run: |
         mkdir -p ${{ matrix.artifact_name }}
         cp target/release/liblibwing.so ${{ matrix.artifact_name }}/
-        cp target/release/wingmon ${{ matrix.artifact_name }}/
-        cp target/release/wingschema ${{ matrix.artifact_name }}/
-        cp target/release/wingprop ${{ matrix.artifact_name }}/
-        cp target/release/wingmeters ${{ matrix.artifact_name }}/
+        cp target/release/examples/wingmon ${{ matrix.artifact_name }}/
+        cp target/release/examples/wingschema ${{ matrix.artifact_name }}/
+        cp target/release/examples/wingprop ${{ matrix.artifact_name }}/
+        cp target/release/examples/wingmeters ${{ matrix.artifact_name }}/
         tar czf ${{ matrix.asset_name }} ${{ matrix.artifact_name }}
 
     - name: Package Windows Build  
@@ -53,33 +47,11 @@ jobs:
       run: |
         mkdir ${{ matrix.artifact_name }}
         copy target\release\libwing.dll ${{ matrix.artifact_name }}\
-        copy target\release\wingmon.exe ${{ matrix.artifact_name }}\
-        copy target\release\wingschema.exe ${{ matrix.artifact_name }}\
-        copy target\release\wingprop.exe ${{ matrix.artifact_name }}\
-        copy target\release\wingmeters.exe ${{ matrix.artifact_name }}\
+        copy target\release\examples/wingmon.exe ${{ matrix.artifact_name }}\
+        copy target\release\examples/wingschema.exe ${{ matrix.artifact_name }}\
+        copy target\release\examples/wingprop.exe ${{ matrix.artifact_name }}\
+        copy target\release\examples/wingmeters.exe ${{ matrix.artifact_name }}\
         7z a ${{ matrix.asset_name }} ${{ matrix.artifact_name }}
-
-    - name: Install cargo-edit
-      run: cargo install cargo-edit
-
-    - name: Configure Git
-      run: |
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        git config --global user.name "github-actions[bot]"
-
-    - name: Bump version
-      run: cargo set-version --bump minor
-
-    - name: Commit version bump
-      run: |
-        git add Cargo.toml Cargo.lock
-        git commit -m "Bump version [skip ci]"
-        git push
-
-    - name: Publish to crates.io
-      env:
-        CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-      run: cargo publish --allow-dirty
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
