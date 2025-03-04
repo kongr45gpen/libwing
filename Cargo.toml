@@ -1,6 +1,6 @@
 [package]
 name = "libwing"
-version = "1.0.3"
+version = "1.0.4"
 license = "MIT"
 readme = "README.md"
 homepage = "https://github.com/dannydulai/libwing"
@@ -13,25 +13,26 @@ name = "libwing"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-libc = "0.2"
 socket2 = "0.5"
 lazy_static = "1.4"
 jzon = "0.12.5"
 thiserror = "2.0.11"
+
+[dev-dependencies]
 eframe = "0.26.0"
 
-[[bin]]
+[[example]]
 name = "wingmeters"
 path = "tools/wingmeters.rs"
 
-[[bin]]
+[[example]]
 name = "wingmon"
 path = "tools/wingmon.rs"
 
-[[bin]]
+[[example]]
 name = "wingschema"
 path = "tools/wingschema.rs"
 
-[[bin]]
+[[example]]
 name = "wingprop"
 path = "tools/wingprop.rs"

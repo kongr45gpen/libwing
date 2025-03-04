@@ -1,5 +1,9 @@
 # Change Log
 
+## [1.0.4] - 2025-03-04
+
+- removed eframe dependency from libwing
+
 ## [1.0.3] - 2025-03-03
 
 - Close read socket when dropping WingConsole
