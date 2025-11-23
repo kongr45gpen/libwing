@@ -8,6 +8,7 @@ use crate::{Result, Error, WingResponse};
 use crate::node::{WingNodeDef, WingNodeData};
 use crate::propmap::NAME_TO_DEF;
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum Meter {
     Channel(u8),
     Aux(u8),
@@ -440,7 +441,7 @@ impl WingConsole {
     {
         let mtrsptr = self.mtrs.clone();
         let mut mtrs = mtrsptr.lock().unwrap();
-        mtrs.next_meter_id += 1;
+        mtrs.next_meter_id = 1;
 
         if mtrs.meters.is_none() {
             let socket = UdpSocket::bind("0.0.0.0:0")?;
